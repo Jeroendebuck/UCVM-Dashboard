@@ -1,0 +1,56 @@
+name: Nightly ETL
+
+on:
+  schedule:
+    - cron: "7 5 * * *"   # daily 05:07 UTC
+  workflow_dispatch: {}
+
+jobs:
+  run-etl:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Set OpenAlex polite email
+        run: echo "OPENALEX_POLITE_EMAIL=${{ secrets.OPENALEX_POLITE_EMAIL }}" >> $GITHUB_ENV
+
+      - name: Ensure data directory
+        run: mkdir -p data
+
+      - name: Run metrics ETL
+        env:
+          OPENALEX_POLITE_EMAIL: ${{ env.OPENALEX_POLITE_EMAIL }}
+        run: |
+          python etl/fetch_author_metrics.py             --input data/full_time_faculty.csv             --output data/roster_with_metrics.csv             --email "${{ env.OPENALEX_POLITE_EMAIL }}"             --delay 0.25
+
+      - name: Run works ETL (last 5y, dedup)
+        env:
+          OPENALEX_POLITE_EMAIL: ${{ env.OPENALEX_POLITE_EMAIL }}
+        run: |
+          python etl/ucvm_works_wrapper.py
+
+      - name: Stamp last update
+        run: |
+          date -u +"%Y-%m-%dT%H:%M:%SZ" | python - <<'PY'
+          import sys, json
+          ts = sys.stdin.read().strip()
+          with open("data/last_updated.json","w") as f:
+              json.dump({"last_updated": ts}, f)
+          PY
+
+      - name: Commit data artifacts
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add data/*.csv data/*.json || true
+          git commit -m "ETL: update data [skip ci]" || echo "No changes"
+          git push
