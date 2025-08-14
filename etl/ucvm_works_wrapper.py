@@ -21,15 +21,18 @@ mod.OUTPUT_DIR   = DATA_DIR
 mod.INPUT_ROSTER = os.environ.get("INPUT_ROSTER", os.path.join(DATA_DIR, "roster_with_metrics.csv"))
 
 # Recompute any derived directories that were bound at import time
-if hasattr(mod, "COMPILED_DIR"):
-    mod.COMPILED_DIR = os.path.join(mod.OUTPUT_DIR, "compiled")
+if hasattr(mod, "ALL_FIELDS_DIR"):
+    mod.ALL_FIELDS_DIR = os.path.join(mod.OUTPUT_DIR, "authors_all_fields")
 if hasattr(mod, "LAST5_DIR"):
     mod.LAST5_DIR = os.path.join(mod.OUTPUT_DIR, "authors_last5y_key_fields")
+if hasattr(mod, "COMPILED_DIR"):
+    mod.COMPILED_DIR = os.path.join(mod.OUTPUT_DIR, "compiled")
 
 # Ensure output dirs exist
 os.makedirs(mod.OUTPUT_DIR, exist_ok=True)
-os.makedirs(getattr(mod, "COMPILED_DIR", os.path.join(DATA_DIR, "compiled")), exist_ok=True)
+os.makedirs(getattr(mod, "ALL_FIELDS_DIR", os.path.join(DATA_DIR, "authors_all_fields")), exist_ok=True)
 os.makedirs(getattr(mod, "LAST5_DIR", os.path.join(DATA_DIR, "authors_last5y_key_fields")), exist_ok=True)
+os.makedirs(getattr(mod, "COMPILED_DIR", os.path.join(DATA_DIR, "compiled")), exist_ok=True)
 
 # Optional knobs if defined in your script
 for name, val in [
@@ -41,10 +44,11 @@ for name, val in [
         setattr(mod, name, val)
 
 # Log final paths for troubleshooting
-print("[wrapper] OUTPUT_DIR   =", mod.OUTPUT_DIR)
-print("[wrapper] COMPILED_DIR =", getattr(mod, "COMPILED_DIR", "n/a"))
-print("[wrapper] LAST5_DIR    =", getattr(mod, "LAST5_DIR", "n/a"))
-print("[wrapper] INPUT_ROSTER =", mod.INPUT_ROSTER)
+print("[wrapper] OUTPUT_DIR    =", mod.OUTPUT_DIR)
+print("[wrapper] ALL_FIELDS_DIR=", getattr(mod, "ALL_FIELDS_DIR", "n/a"))
+print("[wrapper] LAST5_DIR     =", getattr(mod, "LAST5_DIR", "n/a"))
+print("[wrapper] COMPILED_DIR  =", getattr(mod, "COMPILED_DIR", "n/a"))
+print("[wrapper] INPUT_ROSTER  =", mod.INPUT_ROSTER)
 
 # ---- Run main() ----
 if __name__ == "__main__":
