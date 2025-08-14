@@ -5,6 +5,9 @@ on:
     - cron: "7 5 * * *"   # daily 05:07 UTC
   workflow_dispatch: {}
 
+permissions:
+  contents: write
+
 jobs:
   run-etl:
     runs-on: ubuntu-latest
@@ -30,13 +33,18 @@ jobs:
         env:
           OPENALEX_POLITE_EMAIL: ${{ env.OPENALEX_POLITE_EMAIL }}
         run: |
-          python etl/fetch_author_metrics.py             --input data/full_time_faculty.csv             --output data/roster_with_metrics.csv             --email "${{ env.OPENALEX_POLITE_EMAIL }}"             --delay 0.25
+          python etl/fetch_author_metrics.py \
+            --input data/full_time_faculty.csv \
+            --output data/roster_with_metrics.csv \
+            --email "${{ env.OPENALEX_POLITE_EMAIL }}" \
+            --delay 0.25
 
       - name: Run works ETL (last 5y, dedup)
         env:
           OPENALEX_POLITE_EMAIL: ${{ env.OPENALEX_POLITE_EMAIL }}
         run: |
           python etl/ucvm_works_wrapper.py
+
       - name: List ETL outputs
         run: |
           echo "== data =="; ls -la data || true
@@ -44,28 +52,23 @@ jobs:
           echo "== data/authors_last5y_key_fields =="; ls -la data/authors_last5y_key_fields | sed -n '1,50p' || true
           echo "== data/authors_all_fields =="; ls -la data/authors_all_fields | sed -n '1,50p' || true
 
+      # Simpler, more robust stamp step (pure bash)
       - name: Stamp last update
         run: |
-          date -u +"%Y-%m-%dT%H:%M:%SZ" | python - <<'PY'
-          import sys, json
-          ts = sys.stdin.read().strip()
-          with open("data/last_updated.json","w") as f:
-              json.dump({"last_updated": ts}, f)
-          PY
-      
-     - name: Commit & push data
+          set -euxo pipefail
+          mkdir -p data
+          printf '{"last_updated":"%s"}\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > data/last_updated.json
+          cat data/last_updated.json
+
+      - name: Commit & push data
         run: |
           set -euxo pipefail
           git config user.name "github-actions"
           git config user.email "actions@github.com"
+
+          # Include ALL subfolders under data/
           git add -A data
+
           git diff --cached --quiet && echo "No changes to commit" || git commit -m "ETL: update data [skip ci]"
           git pull --rebase origin ${{ github.ref_name }} || true
           git push
-     
-      - name: List ETL outputs
-        run: |
-          echo "== data =="; ls -la data || true
-          echo "== data/compiled =="; ls -la data/compiled || true
-          echo "== data/authors_last5y_key_fields =="; ls -la data/authors_last5y_key_fields | sed -n '1,50p' || true
-          echo "== data/authors_all_fields =="; ls -la data/authors_all_fields | sed -n '1,50p' || true
