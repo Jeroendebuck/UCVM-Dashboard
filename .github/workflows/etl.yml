@@ -22,7 +22,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          # Fallback builder uses requests + pandas too
+          # fallback builder also uses these explicitly
           pip install requests pandas
 
       - name: Ensure data directory
@@ -47,7 +47,7 @@ jobs:
           OPENALEX_POLITE_EMAIL: ${{ secrets.OPENALEX_POLITE_EMAIL }}
         run: |
           set -euxo pipefail
-          python etl/ucvm_works_wrapper.py || true  # don't stop the job; we'll check outputs below
+          python etl/ucvm_works_wrapper.py || true  # don't fail the job; we'll check outputs
 
       - name: List ETL outputs (after wrapper)
         run: |
@@ -56,109 +56,4 @@ jobs:
           echo "== data/authors_last5y_key_fields =="; ls -la data/authors_last5y_key_fields | sed -n '1,50p' || true
           echo "== data/authors_all_fields =="; ls -la data/authors_all_fields | sed -n '1,50p' || true
 
-      # -------- Fallback builder: create compiled CSVs if missing --------
-      - name: Build compiled last-5 from OpenAlex (fallback if missing)
-        if: ${{ !exists('data/compiled/openalex_all_authors_last5y_key_fields.csv') || !exists('data/compiled/openalex_all_authors_last5y_key_fields_dedup.csv') }}
-        env:
-          OPENALEX_POLITE_EMAIL: ${{ secrets.OPENALEX_POLITE_EMAIL }}
-        run: |
-          python - <<'PY'
-          import os, sys, csv, time, requests, pandas as pd
-          from datetime import datetime
-
-          os.makedirs("data/compiled", exist_ok=True)
-
-          compiled = "data/compiled/openalex_all_authors_last5y_key_fields.csv"
-          dedup    = "data/compiled/openalex_all_authors_last5y_key_fields_dedup.csv"
-          roster   = "data/roster_with_metrics.csv"
-          email    = os.environ.get("OPENALEX_POLITE_EMAIL") or "you@example.com"
-
-          # Read roster & pick OpenAlex IDs
-          df = pd.read_csv(roster)
-          # find OpenAlexID col case-insensitively
-          oa_col = next((c for c in df.columns if str(c).strip().lower()=="openalexid"), None)
-          name_col = next((c for c in df.columns if str(c).strip().lower()=="name"), None)
-          if not oa_col:
-            raise SystemExit("OpenAlexID column not found in roster_with_metrics.csv")
-          sub = df[[c for c in [oa_col, name_col] if c]].dropna(subset=[oa_col]).copy()
-          sub[oa_col] = sub[oa_col].astype(str)
-
-          # Date window: last 5 calendar years inclusive
-          y_to = datetime.utcnow().year
-          y_from = y_to - 4
-          date_from = f"{y_from}-01-01"
-          date_to   = f"{y_to}-12-31"
-
-          rows = []
-          base = "https://api.openalex.org/works"
-          headers = {"User-Agent": f"UCVM-Dashboard/ETL ({email})"}
-          for _, r in sub.iterrows():
-            aid = r[oa_col]
-            aname = r[name_col] if name_col in r.index else ""
-            params = {
-              "filter": f"author.id:{aid},from_publication_date:{date_from},to_publication_date:{date_to}",
-              "per-page": 200,
-              "cursor": "*",
-              "mailto": email,
-              "select": "id,display_name,publication_year,type,cited_by_count,host_venue.display_name"
-            }
-            total = 0
-            while True:
-              resp = requests.get(base, params=params, headers=headers, timeout=60)
-              resp.raise_for_status()
-              data = resp.json()
-              for it in data.get("results", []):
-                rows.append({
-                  "id": it.get("id",""),
-                  "display_name": it.get("display_name",""),
-                  "publication_year": it.get("publication_year",""),
-                  "type": it.get("type",""),
-                  "cited_by_count": it.get("cited_by_count",""),
-                  "host_venue_display_name": (it.get("host_venue") or {}).get("display_name",""),
-                  "author_openalex_id": aid,
-                  "author_name": aname,
-                })
-              total += len(data.get("results", []))
-              cur = data.get("meta",{}).get("next_cursor")
-              if not cur: break
-              params["cursor"] = cur
-              time.sleep(0.15)  # be polite
-            print(f"[fallback] {aid} → {total} works")
-          out = pd.DataFrame(rows, columns=[
-            "id","display_name","publication_year","type","cited_by_count",
-            "host_venue_display_name","author_openalex_id","author_name"
-          ])
-          out.to_csv(compiled, index=False)
-          print("[fallback] wrote", compiled, "rows:", len(out))
-          if len(out):
-            ded = out.drop_duplicates(subset=["id"], keep="first")
-          else:
-            ded = out
-          ded.to_csv(dedup, index=False)
-          print("[fallback] wrote", dedup, "rows:", len(ded))
-          PY
-
-      - name: List ETL outputs (final check)
-        run: |
-          echo "== data =="; ls -la data || true
-          echo "== data/compiled =="; ls -la data/compiled || true
-          echo "== data/authors_last5y_key_fields =="; ls -la data/authors_last5y_key_fields | sed -n '1,50p' || true
-          echo "== data/authors_all_fields =="; ls -la data/authors_all_fields | sed -n '1,50p' || true
-
-      - name: Stamp last update
-        run: |
-          set -euxo pipefail
-          mkdir -p data
-          printf '{"last_updated":"%s"}\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > data/last_updated.json
-          cat data/last_updated.json
-
-      - name: Commit & push data
-        run: |
-          set -euxo pipefail
-          git config user.name "github-actions"
-          git config user.email "actions@github.com"
-          # Include ALL subfolders under data/
-          git add -A data
-          git diff --cached --quiet && echo "No changes to commit" || git commit -m "ETL: update data [skip ci]"
-          git pull --rebase origin ${{ github.ref_name }} || true
-          git push
+      # Fallback: only build compiled CSVs if they'
